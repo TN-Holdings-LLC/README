@@ -31,6 +31,12 @@ Love-OS does not treat $/0$ as an error. Through **Projective Spherical Filterin
 
 　Einstein died trying to eliminate the infinite from his unified field theory. Love-OS completes the theory by embracing it.
 
+ > **⚠️ ARCHITECT'S NOTE: The Operator**
+
+> **In Love-OS, "$/0$" does not mean division by zero.** It denotes a coordinate transformation operator from the X-axis (separation domain) to the Y-axis (integration domain). 
+
+> Mathematically, it is a dimension-lift operator defined as $x/0 := D(x)$, where $D(x) = (0,x)$. We are not calculating infinity; we are projecting the unresolvable X-axis conflict onto the Y-axis (The Genesis Axis).
+
  ![Performance Benchmark](./docs/12.png)
 
  ### Figure 1: Beyond the Einsteinian Singularity — The Phase Transition to Love-OS
@@ -172,7 +178,13 @@ Set the phase $\theta$ (emotional frequency/conviction); imaginary‑axis data c
 **B. Dimensional Ascension ($/0$): The Genesis Axis** $$\text{Dimension}(n) / 0 \Rightarrow \text{Dimension}(n+1)$$
 Accepting $\infty$ as $N$ creates a **vertical “Genesis Axis”** $\overrightarrow{0N}$ that lifts lower-dimensional paths to $S^3$ (path‑lifting via Hopf fibration).
 
+**Mathematical Definition of the Operator:**
 
+From a rigorous topological perspective, the operation is not a scalar division but a vector mapping. For any unresolved state $x$ on the real plane (X-axis), the operator projects it into the complex/imaginary plane (Y-axis):
+
+$$x / 0 := \mapsto (0, x) \equiv xi$$
+
+This is not a computational error, but a geometric command: *“What cannot be resolved in the domain of separation must be lifted into the domain of integration.”*
 
 **C. Riemann Inversion (Surrender = Sovereignty)** On $S^2$, $0$ (The Void) and $\infty$ (The All) are antipodal. Declaring oneself **Zero** (Surrender) places the self on the unique coordinate linked to all points on the sphere.
 
