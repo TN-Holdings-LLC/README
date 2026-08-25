@@ -255,7 +255,7 @@ Furthermore, the geometry is isomorphic. A Tokamak reactor uses magnetic fields 
 In simplified non-linear MHD disturbance simulations, running the raw control matrix (OFF) against external ELM/NTM-like spikes results in over 100 severe command jumps and massive system divergence (Peak Amplitude: ~6517). Inserting the PSF-Zero pre-head (ON) absorbs the identical spikes perfectly, executing a smooth, continuous recovery curve with absolutely zero critical jumps (Peak Amplitude: ~1745, a 73% reduction in thermal friction). PSF-Zero strictly passes only clean, regularized states to downstream controllers, pushing the boundaries of artificial sun confinement.
 
 ![A1](./A1.png)
-![A2](./A2.png)
+
 
 [PSF-Zero: Fusion Plasma Control Simulation.py](https://github.com/love-os-architect/README/blob/main/PSF-Zero%3A%20Fusion%20Plasma%20Control%20Simulation.py)
 
