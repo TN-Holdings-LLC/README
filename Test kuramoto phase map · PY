@@ -1,0 +1,229 @@
+"""
+
+test_kuramoto_phase_map.py
+
+Verifies kuramoto_phase_map.py (fixed) against:
+
+  1. an independent O(N^2) per-oscillator reference implementation (fix #2),
+
+  2. the per-point (non-batched) simulate_kuramoto loop (fix #3),
+
+  3. the quantified impact of the degenerate-delay bug (fix #1),
+
+  4. the zero_clamp-on-noise inertness claim at this script's parameter scale.
+
+Run: python3 test_kuramoto_phase_map.py
+
+(Takes a few minutes -- the delay-resolution comparisons in section 3
+
+each run a real simulation.)
+
+"""
+
+import time
+
+import numpy as np
+
+from scipy.stats import norm
+
+from dataclasses import replace
+
+from kuramoto_phase_map import KuramotoConfig, zero_clamp, simulate_kuramoto, generate_phase_map
+
+def simulate_kuramoto_reference_O_N2(K, sigma, cfg):
+
+    """Independent O(N^2) reference -- the same formula as the ORIGINAL
+
+    pasted code's explicit pairwise matrix, used only to cross-check the
+
+    O(N) reduction used in the fixed simulate_kuramoto()."""
+
+    rng = np.random.default_rng(cfg.seed)
+
+    steps = int(cfg.tmax / cfg.dt)
+
+    delay_steps = max(1, int(cfg.tau / cfg.dt))
+
+    omega = rng.normal(0.0, sigma, size=cfg.N)
+
+    theta = rng.uniform(-np.pi, np.pi, size=cfg.N)
+
+    buffer = np.tile(theta, (delay_steps, 1))
+
+    r_trace = np.zeros(steps)
+
+    for k in range(steps):
+
+        theta_delay = buffer[k % delay_steps]
+
+        dtheta = theta_delay[:, None] - theta[None, :]
+
+        coupling = K * np.sin(dtheta).mean(axis=0)
+
+        dW = rng.normal(0.0, np.sqrt(cfg.dt), size=cfg.N)
+
+        noise = np.sqrt(2 * (sigma ** 2) / (2 * cfg.Teff)) * dW
+
+        noise = zero_clamp(noise, tau=0.8)
+
+        theta = theta + (omega + coupling) * cfg.dt + noise
+
+        theta = (theta + np.pi) % (2 * np.pi) - np.pi
+
+        buffer[k % delay_steps] = theta
+
+        r_trace[k] = np.abs(np.exp(1j * theta).mean())
+
+    return r_trace
+
+print("=== [1] O(N) coupling reduction vs. independent O(N^2) reference ===")
+
+cfg_small = replace(KuramotoConfig(), dt=2e-4, tmax=1.0)  # smaller tmax, just for a quick cross-check
+
+r_on = simulate_kuramoto(3.0, 0.1, cfg_small)
+
+r_on2 = simulate_kuramoto_reference_O_N2(3.0, 0.1, cfg_small)
+
+print(f"  max |r_trace difference| over the whole trajectory: {np.max(np.abs(r_on - r_on2)):.3e}")
+
+print(f"  (should be ~1e-14/1e-15, i.e. floating-point noise -- confirms the O(N) formula")
+
+print(f"   is the exact same mean-field sum, not an approximation)\n")
+
+print("=== [2] Batched grid vs. per-point simulate_kuramoto loop ===")
+
+cfg_test = replace(KuramotoConfig(), dt=1e-5, tmax=0.3)  # short tmax to keep this section quick
+
+K_list = np.array([1.0, 3.0, 5.0])
+
+sigma_list = np.array([0.05, 0.15, 0.3])
+
+t0 = time.time()
+
+R_batched = generate_phase_map(K_list, sigma_list, cfg_test)
+
+t_batched = time.time() - t0
+
+t0 = time.time()
+
+max_diff = 0.0
+
+for i, K in enumerate(K_list):
+
+    for j, sigma in enumerate(sigma_list):
+
+        r_trace = simulate_kuramoto(K, sigma, cfg_test)
+
+        steady = r_trace[int(0.4 * len(r_trace)):].mean()
+
+        max_diff = max(max_diff, abs(steady - R_batched[i, j]))
+
+t_perpoint = time.time() - t0
+
+print(f"  max |batched - per-point| across the {len(K_list)}x{len(sigma_list)} grid: {max_diff:.3e}")
+
+print(f"  batched grid time: {t_batched:.2f}s   per-point loop time: {t_perpoint:.2f}s "
+
+      f"({t_perpoint/t_batched:.1f}x slower)\n")
+
+print("=== [3] Quantified impact of the degenerate-delay bug (fix #1) ===")
+
+print("  (same physical tau=200us; only the numerical resolution -- dt -- changes)")
+
+print("  (tmax=1.0s here, matching the module docstring's cited numbers -- a shorter tmax")
+
+print("   makes 'steady-state mean r' a noisier single-trajectory statistic and can even")
+
+print("   flip the sign of the difference at some (K, sigma) points; this longer window")
+
+print("   is the more trustworthy comparison)")
+
+degenerate_cfg = replace(KuramotoConfig(), dt=200e-6, tmax=1.0)   # delay_steps=1 (the OLD default)
+
+resolved_cfg = replace(KuramotoConfig(), dt=1e-5, tmax=1.0)       # delay_steps=20 (the NEW default)
+
+for K, sigma in [(1.0, 0.05), (2.0, 0.10), (3.0, 0.15), (5.0, 0.20)]:
+
+    r_deg = simulate_kuramoto(K, sigma, degenerate_cfg)
+
+    r_res = simulate_kuramoto(K, sigma, resolved_cfg)
+
+    sd = r_deg[int(0.4 * len(r_deg)):].mean()
+
+    sr = r_res[int(0.4 * len(r_res)):].mean()
+
+    pct = (sr - sd) / sd * 100 if sd > 1e-9 else float('nan')
+
+    print(f"  K={K}, sigma={sigma}: degenerate(delay_steps=1) r={sd:.4f}   "
+
+          f"resolved(delay_steps=20) r={sr:.4f}   diff={pct:+.1f}%")
+
+print()
+
+print("=== [4] zero_clamp inertness at this script's parameter scale ===")
+
+tau_clamp = 0.8
+
+for sigma in [0.02, 0.1, 0.2, 0.35]:
+
+    noise_std = sigma * np.sqrt(resolved_cfg.dt / resolved_cfg.Teff)
+
+    p_exceed = 2 * (1 - norm.cdf(tau_clamp / noise_std))
+
+    print(f"  sigma={sigma:.2f}: per-step noise std={noise_std:.5f} rad "
+
+          f"({tau_clamp/noise_std:.1f} std devs below tau={tau_clamp}), "
+
+          f"P(|noise|>tau) per step = {p_exceed:.1e}")
+
+print("  (all effectively zero -- the clamp cannot fire at these settings; confirmed by comparing")
+
+print("   a run with and without the clamp below)")
+
+r_clamped = simulate_kuramoto(3.0, 0.2, resolved_cfg)
+
+def simulate_kuramoto_noclamp(K, sigma, cfg):
+
+    rng = np.random.default_rng(cfg.seed)
+
+    steps = int(cfg.tmax / cfg.dt)
+
+    delay_steps = max(1, int(cfg.tau / cfg.dt))
+
+    omega = rng.normal(0.0, sigma, size=cfg.N)
+
+    theta = rng.uniform(-np.pi, np.pi, size=cfg.N)
+
+    buffer = np.tile(theta, (delay_steps, 1))
+
+    r_trace = np.zeros(steps)
+
+    for k in range(steps):
+
+        theta_delay = buffer[k % delay_steps]
+
+        z_delay_sum = np.exp(1j * theta_delay).sum()
+
+        coupling = K * np.imag(np.exp(-1j * theta) * z_delay_sum) / cfg.N
+
+        dW = rng.normal(0.0, np.sqrt(cfg.dt), size=cfg.N)
+
+        noise = np.sqrt(2 * (sigma ** 2) / (2 * cfg.Teff)) * dW  # no clamp
+
+        theta = theta + (omega + coupling) * cfg.dt + noise
+
+        theta = (theta + np.pi) % (2 * np.pi) - np.pi
+
+        buffer[k % delay_steps] = theta
+
+        r_trace[k] = np.abs(np.exp(1j * theta).mean())
+
+    return r_trace
+
+r_noclamp = simulate_kuramoto_noclamp(3.0, 0.2, resolved_cfg)
+
+print(f"  K=3.0, sigma=0.2: with clamp r={r_clamped[int(0.4*len(r_clamped)):].mean():.6f}   "
+
+      f"without clamp r={r_noclamp[int(0.4*len(r_noclamp)):].mean():.6f}   "
+
+      f"(identical to {'6' if abs(r_clamped[-1]-r_noclamp[-1])<1e-9 else 'fewer'} decimal places)")
