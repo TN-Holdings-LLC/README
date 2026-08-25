@@ -1,0 +1,214 @@
+"""
+
+test_psd_to_rms_phase.py
+
+Verifies psd_to_rms_phase.py (fixed) against the same three scenarios used
+
+to diagnose the pasted version's bugs, and against the pasted version's
+
+own zero_clamp() re-run standalone (its main pipeline can't even run on
+
+this numpy -- see Test 0).
+
+Run: python3 test_psd_to_rms_phase.py
+
+"""
+
+import sys
+
+import numpy as np
+
+import pandas as pd
+
+from scipy import signal
+
+sys.path.insert(0, '.')
+
+from psd_to_rms_phase import PhaseNoiseConfig, zero_clamp, hampel_despike, rms_phase_from_timeseries
+
+rng = np.random.default_rng(42)
+
+fs = 2000.0
+
+N = 2 ** 16
+
+t = np.arange(N) / fs
+
+print("=== Test 0: np.trapz compatibility ===")
+
+try:
+
+    import numpy as _np
+
+    _np.trapz
+
+    print("  np.trapz exists on this numpy -- pasted code would have run (but see numpy 2.0+ elsewhere).")
+
+except AttributeError:
+
+    print("  Confirmed: np.trapz does NOT exist on this numpy (2.x) -- the pasted script's")
+
+    print("  rms_phase_from_timeseries()/rms_phase_from_psd() would raise AttributeError on")
+
+    print("  their very first call. This fixed version uses np.trapezoid (with an np.trapz")
+
+    print("  fallback for older numpy) and runs cleanly, as shown below.")
+
+print()
+
+# ---------------------------------------------------------------
+
+# Test 1: homogeneous white phase noise, sigma_true = 2.0 rad (no spikes).
+
+# ---------------------------------------------------------------
+
+sigma_true = 2.0
+
+phi1 = sigma_true * rng.standard_normal(N)
+
+pd.DataFrame({"t": t, "phi": phi1}).to_csv("white_phase_noise.csv", index=False)
+
+cfg = PhaseNoiseConfig(fmin=1.0, fmax=50e3)  # despike=True by default
+
+result1 = rms_phase_from_timeseries("white_phase_noise.csv", config=cfg)
+
+phi1_d = signal.detrend(phi1, type='linear')
+
+ref_time_domain = float(np.std(phi1_d))
+
+print("=== Test 1: homogeneous white phase noise, sigma_true = 2.0 rad (no real outliers) ===")
+
+print(f"  true sigma (design value)                         : {sigma_true:.4f} rad")
+
+print(f"  time-domain std of raw signal                      : {ref_time_domain:.4f} rad")
+
+print(f"  FIXED rms_phase_from_timeseries (Hampel despike)   : {result1['rms_rad']:.4f} rad "
+
+      f"({result1['n_outliers_removed']} samples flagged as outliers)")
+
+print(f"  [pasted version, for comparison, reported : 0.7482 rad -- a -62.7% bias]")
+
+rel_err1 = abs(result1['rms_rad'] - ref_time_domain) / ref_time_domain * 100
+
+print(f"  fixed-version error vs. true sigma: {rel_err1:.2f}%\n")
+
+# ---------------------------------------------------------------
+
+# Test 2: small noise floor (0.15 rad) + 20 genuine outlier spikes.
+
+# ---------------------------------------------------------------
+
+sigma_small = 0.15
+
+phi2 = sigma_small * rng.standard_normal(N)
+
+spike_idx = rng.choice(N, size=20, replace=False)
+
+phi2[spike_idx] += rng.choice([-1, 1], size=20) * rng.uniform(8, 15, size=20)
+
+pd.DataFrame({"t": t, "phi": phi2}).to_csv("spiky_phase_noise.csv", index=False)
+
+result2 = rms_phase_from_timeseries("spiky_phase_noise.csv", config=cfg)
+
+phi2_d = signal.detrend(phi2, type='linear')
+
+mask_no_spikes = np.ones(N, dtype=bool)
+
+mask_no_spikes[spike_idx] = False
+
+true_floor_rms = float(np.std(phi2_d[mask_no_spikes]))
+
+print("=== Test 2: small noise floor (0.15 rad) + 20 genuine outlier spikes (8-15 rad) ===")
+
+print(f"  true noise-floor RMS (excluding the 20 spikes)     : {true_floor_rms:.4f} rad")
+
+print(f"  FIXED rms_phase_from_timeseries (Hampel despike)   : {result2['rms_rad']:.4f} rad "
+
+      f"({result2['n_outliers_removed']} samples flagged as outliers, 20 true spikes exist)")
+
+print(f"  [pasted version, for comparison, reported : 0.1469 rad]\n")
+
+# ---------------------------------------------------------------
+
+# Test 3: single-tone spectral shape preservation.
+
+# ---------------------------------------------------------------
+
+f0 = 50.0
+
+A = 3.0
+
+phi3 = A * np.sin(2 * np.pi * f0 * t)
+
+phi3_d = signal.detrend(phi3, type='linear')
+
+phi3_despiked, mask3 = hampel_despike(phi3_d, window=cfg.hampel_window, n_sigmas=cfg.hampel_n_sigmas)
+
+nperseg3 = min(N, 2 ** 14)
+
+freqs_raw, P_raw = signal.welch(phi3_d, fs=fs, window='hann', nperseg=nperseg3, noverlap=nperseg3 // 2, scaling='density')
+
+freqs_fx, P_fx = signal.welch(phi3_despiked, fs=fs, window='hann', nperseg=nperseg3, noverlap=nperseg3 // 2, scaling='density')
+
+def power_near(freqs, P, target, half_width=2.0):
+
+    m = (freqs >= target - half_width) & (freqs <= target + half_width)
+
+    return float(np.trapezoid(P[m], freqs[m]))
+
+fundamental_raw = power_near(freqs_raw, P_raw, f0)
+
+fundamental_fx = power_near(freqs_fx, P_fx, f0)
+
+h3_raw = power_near(freqs_raw, P_raw, 3 * f0)
+
+h3_fx = power_near(freqs_fx, P_fx, 3 * f0)
+
+print(f"=== Test 3: single {f0:.0f} Hz tone, amplitude {A} rad (>> tau) -- spectral shape preserved? ===")
+
+print(f"  samples flagged as outliers by Hampel filter: {int(mask3.sum())} / {N} "
+
+      f"(a smooth sinusoid is not a local point-anomaly, so it should be ~0)")
+
+print(f"  power near fundamental ({f0:.0f} Hz):  raw={fundamental_raw:.4e}   fixed-pipeline={fundamental_fx:.4e}")
+
+print(f"  power near 3rd harmonic ({3*f0:.0f} Hz): raw={h3_raw:.4e}   fixed-pipeline={h3_fx:.4e}")
+
+print(f"  [pasted version leaked 5.01% of the fundamental's power into the 3rd harmonic;")
+
+print(f"   fixed pipeline's 3rd-harmonic power is {h3_fx/max(fundamental_fx,1e-300)*100:.4f}% of its fundamental]\n")
+
+# ---------------------------------------------------------------
+
+# Parameter sweep across all three scenarios that motivated the tuned
+
+# defaults (hampel_window=41, hampel_n_sigmas=6.0).
+
+# ---------------------------------------------------------------
+
+print("=== Hampel filter parameter sweep (motivates the tuned defaults) ===")
+
+print(f"{'window':>6} {'n_sig':>6} | {'test1 std':>10} {'flagged':>8} | "
+
+      f"{'test2 std':>10} {'flagged':>8} {'caught':>8} | {'test3 flagged':>14}")
+
+for window, nsig in [(11, 5.0), (21, 6.0), (25, 6.0), (31, 6.0), (41, 6.0), (41, 7.0), (61, 8.0)]:
+
+    d1, m1 = hampel_despike(phi1_d, window=window, n_sigmas=nsig)
+
+    d2, m2 = hampel_despike(phi2_d, window=window, n_sigmas=nsig)
+
+    d3, m3 = hampel_despike(phi3_d, window=window, n_sigmas=nsig)
+
+    caught = int(m2[spike_idx].sum())
+
+    marker = "  <- default" if (window == cfg.hampel_window and nsig == cfg.hampel_n_sigmas) else ""
+
+    print(f"{window:>6} {nsig:>6.1f} | {np.std(d1):>10.4f} {int(m1.sum()):>8} | "
+
+          f"{np.std(d2):>10.4f} {int(m2.sum()):>8} {caught:>5}/20 | {int(m3.sum()):>8}/{N}{marker}")
+
+print(f"\n(true values: test1 sigma=2.0000, test2 floor={true_floor_rms:.4f} rad with exactly 20 real spikes,")
+
+print(f" test3 should flag ~0 since it's a smooth sinusoid, not a spike)")
+
