@@ -49,3 +49,5 @@ To validate this architecture on your own physical links, we provide two scripts
 1.[psd_to_rms_phase.py](https://github.com/love-os-architect/README/blob/main/psd_to_rms_phase.py)　: Converts raw interferometer telemetry (time-series CSV) into a rigorously integrated RMS phase noise $\sigma_\phi$ (1-50kHz).
 2. [kuramoto_phase_map.py](https://github.com/love-os-architect/README/blob/main/kuramoto_phase_map.py)　: Simulates the stochastic Kuramoto delay differential equations to generate a 2D survival boundary Phase Map ($K$ vs. $\sigma_\phi$), acting as a "ruler" for stable loop design.
 
+![444](./444.png)
+
